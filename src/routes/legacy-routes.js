@@ -19,6 +19,9 @@ function legacyRoutes(pool, key, paypal) {
   const deviceRate = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
   router.post('/api/apps/devices/challenge', deviceRate, device.challenge);
   router.post('/api/apps/devices/login', deviceRate, device.login);
+  const recoveryRate = rateLimit({ windowMs: 60_000, limit: 12, standardHeaders: 'draft-8', legacyHeaders: false });
+  router.post('/api/apps/devices/recovery-code', recoveryRate, device.issueRecovery);
+  router.post('/api/apps/devices/recover', recoveryRate, device.recover);
   router.post('/reseller/paybalance/newbalance', admin, credits.manual);
   router.get('/reseller/service/CurrentSolde', reseller, credits.balance);
   router.get('/reseller/service/payment', reseller, credits.history);

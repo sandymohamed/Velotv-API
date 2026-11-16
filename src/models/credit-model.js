@@ -1,8 +1,11 @@
 const { HttpError } = require('../utils/errors');
 
-async function lockBalance(db, resellerId) {
+const { activeReseller } = require('../services/reseller-access');
+
+async function lockBalance(db, resellerId, { requireAccess = false } = {}) {
   const [[reseller]] = await db.execute('SELECT id, status FROM resellers WHERE id = ? FOR UPDATE', [resellerId]);
-  if (!reseller || reseller.status !== 1) throw new HttpError(404, 'Active reseller not found');
+  if (!reseller) throw new HttpError(404, 'Reseller not found');
+  if (requireAccess && !(await activeReseller(db, resellerId, true))) throw new HttpError(403, 'Reseller access is inactive');
   const [rows] = await db.execute('SELECT id, amount FROM credits WHERE reseller_id = ? FOR UPDATE', [resellerId]);
   if (rows.length > 1) throw new HttpError(409, 'Duplicate balance rows need reconciliation');
   return rows[0] ?? { amount: '0.00000' };

@@ -1,0 +1,7 @@
+CREATE TABLE velotv_admin_activity (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  action VARCHAR(40) NOT NULL,
+  target_id INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;

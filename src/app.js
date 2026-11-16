@@ -3,9 +3,11 @@ const helmet = require('helmet');
 const { ZodError } = require('zod');
 const { HttpError } = require('./utils/errors');
 const { entitlementRoutes } = require('./routes/entitlement-routes');
+const { adminRoutes } = require('./routes/admin-routes');
+const { dashboardRoutes } = require('./routes/dashboard-routes');
 const { legacyRoutes } = require('./routes/legacy-routes');
-
-
+const { devicePlaylistsRoutes } = require('./routes/device-playlists-routes');
+const { providerActivityRoutes } = require('./routes/provider-activity-routes');
 
 function createApp(pool, key, paypal = null, verifyPlay = null) {
   if (!/^[0-9a-f]{64}$/i.test(key ?? '')) throw new Error('JWT_SECRET must contain 64 hex characters');
@@ -19,7 +21,23 @@ function createApp(pool, key, paypal = null, verifyPlay = null) {
     await pool.execute('SELECT 1');
     res.json({ status: 'ok' });
   });
+  const dashboardOrigins = new Set((process.env.DASHBOARD_ORIGINS ?? '')
+    .split(',').map(value => value.trim()).filter(Boolean));
+  app.use((req, res, next) => {
+    res.vary('Origin');
+    if (dashboardOrigins.has(req.get('Origin'))) {
+      res.set('Access-Control-Allow-Origin', req.get('Origin'));
+      res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key');
+      if (req.method === 'OPTIONS') return res.sendStatus(204);
+    }
+    next();
+  });
+  app.use(adminRoutes(pool, Buffer.from(key, 'hex'), paypal));
+  app.use(dashboardRoutes(pool, Buffer.from(key, 'hex')));
   app.use(entitlementRoutes(pool, verifyPlay));
+  app.use(devicePlaylistsRoutes(pool, Buffer.from(key, 'hex')));
+  app.use(providerActivityRoutes(pool));
   app.use(legacyRoutes(pool, Buffer.from(key, 'hex'), paypal));
   app.use((_req, res) => res.status(404).json({ error: true, message: 'Route unavailable in this build' }));
   app.use((error, _req, res, next) => {

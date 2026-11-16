@@ -14,11 +14,14 @@ const dummyHash = bcrypt.hashSync('invalid-account-fallback', 12);
 function login(pool, key, role) {
   return async (req, res) => {
     const { email, username, password } = input.parse(req.body);
+    
     const identifier = role === 'admin' ? email : (email || username);
     if (!identifier) throw new HttpError(400, 'Missing login identifier');
+
     const account = await accounts.findLogin(pool, role, identifier);
     const valid = await bcrypt.compare(password, account?.password || dummyHash);
-    if (!valid || account?.status !== 1) {
+    
+    if (!valid || account?.status !== 1 || (role === 'reseller' && !(await accounts.activeAccount(pool, role, account.id)))) {
       return res.status(202).json({ success: false, result: 'Incorrect credentials' });
     }
     const { password: _secret, ...payload } = account;

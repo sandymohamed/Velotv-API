@@ -1,3 +1,4 @@
+const { activeReseller } = require('../services/reseller-access');
 const accounts = {
   admin: {
     login: 'SELECT id, name, email, password, status FROM admins WHERE email = ? LIMIT 2',
@@ -15,6 +16,7 @@ async function findLogin(db, role, name) {
 }
 
 async function activeAccount(db, role, id) {
+  if (role === 'reseller') return activeReseller(db, id);
   const [[account]] = await db.execute(accounts[role].status, [id]);
   return account;
 }

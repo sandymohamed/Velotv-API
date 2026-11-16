@@ -20,7 +20,7 @@ async function runCreditOperation(pool, input, work) {
   const key = hash(input.operation);
   const requestHash = hash(input.fingerprint);
   return transaction(pool, async db => {
-    const balance = await credits.lockBalance(db, input.resellerId);
+    const balance = await credits.lockBalance(db, input.resellerId, { requireAccess: input.kind === 'coupon_purchase' });
     const previous = await credits.readOperation(db, key);
     if (previous) {
       if (previous.request_hash !== requestHash) throw new HttpError(409, 'Reference already used with different details');

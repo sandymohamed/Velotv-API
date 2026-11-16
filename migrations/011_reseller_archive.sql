@@ -1,0 +1,1 @@
+ALTER TABLE resellers ADD COLUMN archived_at DATETIME NULL;

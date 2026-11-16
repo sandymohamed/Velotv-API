@@ -4,6 +4,7 @@ const service = require('../services/device-service');
 const { listCoupons } = require('../models/coupon-model');
 
 const { issueAndroidChallenge } = require('../services/android-device-proof');
+const { issueRecoveryCode, recoverDevice } = require('../services/android-device-recovery');
 const password = z.string().min(1).max(72);
 const legacyIdentity = z.object({ mac, password, android_id: z.never().optional() });
 const androidIdentity = z.object({ android_id: androidId, type: id }).strict();
@@ -13,7 +14,12 @@ const challengeInput = androidIdentity.extend({ public_key: base64, legacy_passw
 const androidLogin = androidIdentity.extend({
   version, challenge: z.string().regex(/^[0-9a-f]{64}$/), signature: base64,
 });
-const loginInput = z.union([androidLogin, legacyIdentity.extend({ type: id, version })]);
+const recoverInput = androidIdentity.extend({
+  public_key: base64,
+  code: z.string().max(64).transform(value => value.replace(/[\s-]/g, '').toUpperCase())
+    .pipe(z.string().regex(/^[A-F0-9]{20}$/)),
+});
+const loginInput = z.union([androidIdentity.extend({ version }), androidLogin, legacyIdentity.extend({ type: id, version })]);
 const redeemInput = z.union([
   androidIdentity.extend({ id_coupon: id }),
   legacyIdentity.extend({ id_coupon: id, type: id.optional() }),
@@ -26,6 +32,8 @@ const listInput = z.object({
 function deviceController(pool) {
   return {
     async challenge(req, res) { res.json(await issueAndroidChallenge(pool, challengeInput.parse(req.body))); },
+    async issueRecovery(req, res) { res.json(await issueRecoveryCode(pool, androidLogin.parse(req.body))); },
+    async recover(req, res) { res.json(await recoverDevice(pool, recoverInput.parse(req.body))); },
     async login(req, res) { res.json(await service.loginDevice(pool, loginInput.parse(req.body))); },
     async redeem(req, res) { res.json(await service.redeemCoupon(pool, req.user.id, redeemInput.parse(req.body))); },
     async coupons(req, res) {

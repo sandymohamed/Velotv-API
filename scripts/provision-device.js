@@ -16,7 +16,7 @@ async function main() {
   const pool = await connectDatabase();
   try {
     const [result] = await pool.execute(`UPDATE devices SET android_id = ?, android_public_key = ?,
-      android_challenge = NULL, android_challenge_expires_at = NULL, android_verified_at = NULL
+      android_recovery_digest = NULL, android_challenge = NULL, android_challenge_expires_at = NULL, android_verified_at = NULL
       WHERE id = ? AND type = ? AND (android_id IS NULL OR android_id = ?)`,
     [data.androidId, key, data.existingId, data.type, data.androidId]);
     if (result.affectedRows !== 1) throw new Error('The existing device ID, type, or Android ID does not match');

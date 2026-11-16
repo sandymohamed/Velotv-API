@@ -1,0 +1,8 @@
+CREATE TABLE velotv_reseller_plans (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL UNIQUE,
+  duration_months INT NOT NULL,
+  price DECIMAL(10,2) NOT NULL,
+  currency CHAR(3) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;

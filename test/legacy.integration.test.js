@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const { generateKeyPairSync, randomUUID, sign } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const { connectDatabase } = require('../src/config/database');
@@ -37,7 +37,7 @@ test('legacy MySQL schema, manual credits, PayPal and coupon redemption', {
   assert.notEqual(bootstrap.checksum, oldChecksum);
   await migrate(pool);
   const [[{ count }]] = await pool.execute('SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE()');
-  assert.equal(count, 39);
+  assert.equal(count, 43);
   const pass = 'temporary-example-password';
   const hash = await bcrypt.hash(pass, 4);
   await pool.execute('INSERT INTO admins(name,password,email) VALUES (?,?,?)', ['Admin', hash, 'admin@example.test']);
@@ -124,34 +124,43 @@ test('legacy MySQL schema, manual credits, PayPal and coupon redemption', {
   assert.equal((await call('GET', '/reseller/coupon', 200, null, reseller)).result.length, 2);
   const androidId = '8ac13099bc22de01';
   const android = { android_id: androidId, type: 1 };
-  const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  const public_key = pair.publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
-  const challengePath = '/api/apps/devices/challenge';
   const loginPath = '/api/apps/devices/login';
-  const makeLogin = async () => {
-    const { challenge } = await post(challengePath, 200, { ...android, public_key });
-    const message = Buffer.from(`velotv-device-login-v1:${androidId}:1:${challenge}`);
-    return { ...android, challenge, signature: sign('sha256', message, pair.privateKey).toString('base64') };
-  };
   const unused = (await call('GET', '/reseller/coupon?used=0', 200, null, reseller)).result[0];
   const redemption = { ...android, id_coupon: unused.id };
-  const firstLogin = await makeLogin();
-  await post('/reseller/devices/redeemed', 403, redemption, reseller);
+  await post('/reseller/devices/redeemed', 404, redemption, reseller);
   await post(loginPath, 400, { ...android, password: 'legacy' });
-  assert.equal((await post(loginPath, 200, firstLogin)).status, -1);
-  await post(loginPath, 401, firstLogin);
-  await post('/reseller/devices/redeemed', 200, redemption, reseller);
+  await post('/reseller/dashboard/devices/register-and-activate', 200, redemption, reseller);
   const found = await call('GET', '/reseller/coupon?search=' + androidId, 200, null, reseller);
   assert.equal(found.result[0].android_id, androidId);
-  const other = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  await post(challengePath, 409, { ...android,
-    public_key: other.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') });
-  const activeAndroid = await post(loginPath, 200, await makeLogin());
+  const activeAndroid = await post(loginPath, 200, android);
   assert.equal(activeAndroid.status, 1);
   assert.equal(activeAndroid.mac, null);
   assert.equal(activeAndroid.android_id, androidId);
   assert.equal(activeAndroid.android_public_key, undefined);
   assert.equal(activeAndroid.android_challenge, undefined);
+  const [insert] = await pool.execute('INSERT INTO profiles(profile_name,id_device,host) VALUES (?,?,?)',
+    ['Provider', String(activeAndroid.id), 'https://example.test']);
+  const restored = await post(loginPath, 200, { ...android, version: '2.0' });
+  assert.equal(restored.id, activeAndroid.id);
+  assert.equal(restored.ExipiredAt, activeAndroid.ExipiredAt);
+  assert.equal(restored.playlist[0].id, insert.insertId);
+
+  const activity = { android_id: androidId, device_type: 1, profileid: insert.insertId };
+  const movie = { ...activity, type: 'movie', streamid: '102' };
+  const favorites = '/api/v2/favorites/';
+  const recents = '/api/v2/recents/';
+  await post(favorites + 'selectall', 403, { ...activity, profileid: 1, type: 'movie' });
+  await Promise.all([
+    post(favorites + 'createDelete', 200, { ...movie, enabled: true }),
+    post(favorites + 'createDelete', 200, { ...movie, enabled: true }),
+  ]);
+  assert.deepEqual((await post(favorites + 'selectall', 200, { ...activity, type: 'movie' })).data, [{ streamid: '102' }]);
+  await post(favorites + 'createDelete', 200, { ...movie, enabled: false });
+  assert.deepEqual((await post(favorites + 'selectall', 200, { ...activity, type: 'movie' })).data, []);
+  await post(recents + 'insertDatarecent', 200, movie);
+  await post(recents + 'insertDatarecent', 200, movie);
+  assert.deepEqual((await post(recents + 'selectrecentAll', 200, activity)).data,
+    { live: [], movie: [{ streamid: '102' }], serie: [] });
   const history = await call('GET', '/reseller/service/payment', 200, null, reseller);
   assert.equal(history.data.length, 4);
   await call('GET', '/api/admin/resellers/1/credit-report', 403, null, reseller);
@@ -159,6 +168,36 @@ test('legacy MySQL schema, manual credits, PayPal and coupon redemption', {
   assert.equal(report.packagePayments.length, 1);
   assert.equal(report.activations.length, 2);
   assert.deepEqual(report.payments.map(p => p.methode), ['PAYPAL', 'GIFT', 'MANUAL_PAID']);
+  const consolePath = '/api/admin/console/';
+  await call('GET', consolePath + 'overview', 403, null, reseller);
+  const overview = await call('GET', consolePath + 'overview', 200, null, admin);
+  assert.equal(overview.months.length, 12);
+  assert.equal(overview.totals.devices, 2);
+  assert.equal((await call('GET', consolePath + 'devices?search=' + androidId, 200, null, admin)).count, 1);
+  const plan = await post(consolePath + 'plans', 201, {
+    name: 'Partner', duration_months: 3, price: 25, currency: 'EUR', enabled: true,
+  }, admin);
+  const managed = await post(consolePath + 'resellers', 201, {
+    username: 'Managed', email: 'managed@example.test', phone: '', password: pass, plan_id: plan.id,
+  }, admin);
+  const managedCredentials = { email: 'managed@example.test', password: pass };
+  const managedToken = (await post('/reseller/user/login', 200, managedCredentials)).result;
+  const lifecycle = consolePath + 'resellers/' + managed.id + '/membership';
+  await post(lifecycle, 200, { action: 'pause' }, admin);
+  await call('GET', '/reseller/service/CurrentSolde', 403, null, managedToken);
+  await post(lifecycle, 200, { action: 'resume' }, admin);
+  await call('GET', '/reseller/service/CurrentSolde', 200, null, managedToken);
+  await pool.execute('UPDATE velotv_reseller_memberships SET expires_at = UTC_TIMESTAMP() WHERE reseller_id = ?', [managed.id]);
+  await call('GET', '/reseller/service/CurrentSolde', 403, null, managedToken);
+  await post(lifecycle, 409, { action: 'resume' }, admin);
+  await post(lifecycle, 200, { action: 'assign', plan_id: plan.id }, admin);
+  await post(lifecycle, 200, { action: 'archive' }, admin);
+  await post('/reseller/user/login', 202, managedCredentials);
+  const listings = await call('GET', consolePath + 'resellers?search=Managed', 200, null, admin);
+  assert.equal(listings.rows[0].state, 'archived');
+  await call('PATCH', consolePath + 'payment-methods/paypal', 200, { enabled: false, instructions: '' }, admin);
+  await post('/reseller/paybalance/paypal/pay', 503, { amount: '2.00' }, reseller);
+  await call('GET', callback, 303);
   const [[{ gift }]] = await pool.execute("SELECT payment_amount AS gift FROM payment_services WHERE methode = 'GIFT'");
   assert.equal(gift, '0.00000');
 });
