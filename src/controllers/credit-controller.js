@@ -1,3 +1,4 @@
+const { checkoutExpectation } = require('../utils/checkout-expectation');
 const { paymentEnabled } = require('../services/reseller-access');
 const { HttpError } = require('../utils/errors');
 const { randomUUID } = require('node:crypto');
@@ -23,40 +24,19 @@ function creditController(pool) {
   return {
     async manual(req, res) {
       const data = topUp.parse(req.body);
-      console.log("data:", data);
-
       if (data.kind === 'manual_paid' && !(await paymentEnabled(pool, 'manual'))) throw new HttpError(503, 'Manual payments are disabled');
-     
       res.json(await service.manualTopUp(pool, req.user.id, {
-        ...data,
-        resellerId: data.reseller_id,
-        reference: data.paymentId,
-        email: data.paymentEmail,
+        ...data, resellerId: data.reseller_id, reference: data.paymentId, email: data.paymentEmail,
       }));
-
-      console.log("RESSS:",  req.user.id, {
-        ...data,
-        resellerId: data.reseller_id,
-        reference: data.paymentId,
-        email: data.paymentEmail,
-      })
-
-
     },
     async buy(req, res) {
       if (!(await paymentEnabled(pool, 'credits'))) throw new HttpError(503, 'Credit purchases are disabled');
-    
-      const { package: packageId } = z.object({ package: id }).parse(req.body);
+      const { package: packageId, offer_id: offerId, expected_terms: expectedTerms } = z.object({ package: id, offer_id: id.optional(), expected_terms: checkoutExpectation.optional() }).parse(req.body);
       const operationId = reference.parse(req.get('Idempotency-Key') ?? randomUUID());
-    
-      res.json(await service.buyCoupons(pool, req.user.id, packageId, operationId));
+      res.json(await service.buyCoupons(pool, req.user.id, packageId, operationId, offerId, expectedTerms));
     },
     async history(req, res) {
-      res.json({
-        error: false,
-        message: 'success',
-        data: await readLedger(pool, req.user.id)
-      });
+      res.json({ error: false, message: 'success', data: await readLedger(pool, req.user.id) });
     },
     async reconcile(req, res) {
       const resellerId = id.parse(req.params.id);
@@ -72,11 +52,7 @@ function creditController(pool) {
     },
     async balance(req, res) {
       const amount = await readBalance(pool, req.user.id);
-      res.json({
-        error: false,
-        message: '',
-        solde: amount
-      });
+      res.json({ error: false, message: '', solde: amount });
     },
   };
 }

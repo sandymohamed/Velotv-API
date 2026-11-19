@@ -3,10 +3,10 @@ async function loadPackage(db, packageId) {
   return row;
 }
 
-async function createCoupons(db, resellerId, duration, codes) {
+async function createCoupons(db, resellerId, duration, codes, purchaseId = null) {
   for (const code of codes) {
-    await db.execute('INSERT INTO reseller_packages(id_reseller, duration, coupon, used) VALUES (?, ?, ?, 0)',
-      [resellerId, duration, code]);
+    await db.execute('INSERT INTO reseller_packages(id_reseller, duration, coupon, used, purchase_id) VALUES (?, ?, ?, 0, ?)',
+      [resellerId, duration, code, purchaseId]);
   }
 }
 

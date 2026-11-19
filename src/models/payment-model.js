@@ -1,9 +1,9 @@
 async function createIntent(db, order) {
   await db.execute(`INSERT INTO velotv_paypal_orders
-    (id, reseller_id, purpose, package_id, duration, coupon_count, amount, currency)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    (id, reseller_id, purpose, package_id, duration, coupon_count, amount, currency, purchase_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   [order.id, order.resellerId, order.purpose, order.packageId, order.duration,
-    order.couponCount, order.amount, order.currency]);
+    order.couponCount, order.amount, order.currency, order.purchaseId ?? null]);
 }
 async function attachOrder(db, id, orderId) {
   await db.execute('UPDATE velotv_paypal_orders SET paypal_order_id = ? WHERE id = ?', [orderId, id]);

@@ -1,3 +1,4 @@
+const { previewRemoval, removePackage, restorePackage } = require('../services/package-lifecycle-service');
 const { Router } = require('express');
 const { z } = require('zod');
 const bcrypt = require('bcryptjs');
@@ -27,10 +28,12 @@ const listInput = z.object({
 const couponPackage = z.object({
   package_name: label, package_amount: z.number().positive().max(99999.999).multipleOf(0.001),
   periods: z.number().int().min(1).max(120), count_devices: z.number().int().min(1).max(1000),
+  enabled: z.boolean().optional(), offer_only: z.boolean().optional(),
 }).strict();
 
 const resellerState = `CASE WHEN r.archived_at IS NOT NULL OR m.archived_at IS NOT NULL THEN 'archived'
   WHEN r.status <> 1 OR m.paused_at IS NOT NULL THEN 'paused'
+  WHEN r.onboarding_pending=1 THEN 'invitation pending'
   WHEN m.expires_at <= UTC_TIMESTAMP() THEN 'expired'
   WHEN m.plan_id IS NULL THEN 'legacy' ELSE 'active' END`;
 const ownership = 'SELECT id_device, MAX(id) AS last_id FROM reseller_devices GROUP BY id_device';
@@ -55,7 +58,8 @@ async function listResellers(pool, filters) {
   const from = `FROM resellers r LEFT JOIN velotv_reseller_memberships m ON m.reseller_id = r.id
     WHERE LOCATE(LOWER(?), LOWER(CONCAT_WS(' ',r.username,r.email,r.phone))) > 0 OR ? = ''`;
   const args = [filters.search, filters.search];
-  const [rows] = await pool.execute(`SELECT r.id, r.username, r.email, r.phone, m.plan_id,
+  const [rows] = await pool.execute(`SELECT r.id, r.username, r.email, r.phone, r.agent_id,r.onboarding_pending,
+    (SELECT username FROM velotv_agents WHERE id=r.agent_id) AS agent_name, m.plan_id,
     m.starts_at, m.expires_at, ${resellerState} AS state,
     (SELECT COUNT(*) FROM profiles p WHERE p.added_by_reseller_id = r.id) AS playlists
     ${from} ORDER BY r.id DESC LIMIT 50 OFFSET ?`, [...args, filters.page * 50]);
@@ -129,6 +133,7 @@ function adminRoutes(pool, key, paypal) {
     const input = accountInput.extend({ plan_id: id }).parse(req.body);
     const hash = await bcrypt.hash(input.password, 12);
     const resellerId = await transaction(pool, async db => {
+      await db.execute('SELECT id FROM velotv_staff_creation_lock WHERE id=1 FOR UPDATE');
       await assertAvailableIdentity(db, input);
       const [insert] = await db.execute('INSERT INTO resellers(username,email,phone,password) VALUES (?,?,?,?)',
         [input.username, input.email, input.phone, hash]);
@@ -144,6 +149,7 @@ function adminRoutes(pool, key, paypal) {
     const input = accountInput.extend({ password: password.optional() }).parse(req.body);
     const hash = input.password ? await bcrypt.hash(input.password, 12) : null;
     await transaction(pool, async db => {
+      await db.execute('SELECT id FROM velotv_staff_creation_lock WHERE id=1 FOR UPDATE');
       await requireReseller(db, resellerId);
       await assertAvailableIdentity(db, input, resellerId);
       await db.execute(`UPDATE resellers SET username=?, email=?, phone=?, password=COALESCE(?,password),
@@ -206,15 +212,18 @@ function adminRoutes(pool, key, paypal) {
     res.json({ id: planId });
   });
 
-  router.get('/api/admin/console/coupon-packages', async (_req, res) => {
-    const [packages] = await pool.execute('SELECT id, package_name, package_amount, periods, count_devices FROM packages_reseller ORDER BY id DESC');
+  router.get('/api/admin/console/coupon-packages', async (req, res) => {
+    const state = z.enum(['active','archived','all']).default('active').parse(req.query.state);
+    const where = state === 'active' ? 'WHERE archived_at IS NULL' : state === 'archived' ? 'WHERE archived_at IS NOT NULL' : '';
+    const [packages] = await pool.execute(`SELECT id, package_name, package_amount, periods, count_devices, enabled, offer_only, archived_at
+      FROM packages_reseller ${where} ORDER BY id DESC`);
     res.json({ packages });
   });
   router.post('/api/admin/console/coupon-packages', async (req, res) => {
     const input = couponPackage.parse(req.body);
     const packageId = await transaction(pool, async db => {
-      const [insert] = await db.execute('INSERT INTO packages_reseller(package_name,package_amount,periods,count_devices,id_pay) VALUES (?,?,?,?,0)',
-        [input.package_name, input.package_amount, input.periods, input.count_devices]);
+      const [insert] = await db.execute('INSERT INTO packages_reseller(package_name,package_amount,periods,count_devices,id_pay,enabled,offer_only) VALUES (?,?,?,?,0,?,?)',
+        [input.package_name, input.package_amount, input.periods, input.count_devices, input.enabled ?? true, input.offer_only ?? false]);
       await record(db, req.user.id, 'coupon_package_created', insert.insertId);
       return insert.insertId;
     });
@@ -224,12 +233,25 @@ function adminRoutes(pool, key, paypal) {
     const packageId = id.parse(req.params.id);
     const input = couponPackage.parse(req.body);
     await transaction(pool, async db => {
-      const [updated] = await db.execute('UPDATE packages_reseller SET package_name=?,package_amount=?,periods=?,count_devices=?,updated_at=UTC_TIMESTAMP() WHERE id=?',
-        [input.package_name, input.package_amount, input.periods, input.count_devices, packageId]);
+      const [[existing]] = await db.execute('SELECT id, archived_at FROM packages_reseller WHERE id=? FOR UPDATE', [packageId]);
+      if (!existing) throw new HttpError(404, 'Coupon package not found.');
+      if (existing.archived_at) throw new HttpError(409, 'Restore the archived package before editing it.');
+      const [updated] = await db.execute('UPDATE packages_reseller SET package_name=?,package_amount=?,periods=?,count_devices=?,enabled=COALESCE(?,enabled),offer_only=COALESCE(?,offer_only),updated_at=UTC_TIMESTAMP() WHERE id=?',
+        [input.package_name, input.package_amount, input.periods, input.count_devices, input.enabled ?? null, input.offer_only ?? null, packageId]);
       if (!updated.affectedRows) throw new HttpError(404, 'Coupon package not found.');
       await record(db, req.user.id, 'coupon_package_updated', packageId);
     });
     res.json({ id: packageId });
+  });
+
+  router.get('/api/admin/console/coupon-packages/:id/deletion-preview', async (req, res) => {
+    res.json(await previewRemoval(pool, id.parse(req.params.id)));
+  });
+  router.delete('/api/admin/console/coupon-packages/:id', async (req, res) => {
+    res.json(await removePackage(pool, id.parse(req.params.id), req.user.id));
+  });
+  router.post('/api/admin/console/coupon-packages/:id/restore', async (req, res) => {
+    res.json(await restorePackage(pool, id.parse(req.params.id), req.user.id));
   });
 
   router.get('/api/admin/console/payment-methods', async (_req, res) => {

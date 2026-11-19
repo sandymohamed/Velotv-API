@@ -1,3 +1,6 @@
+const { agentRoutes } = require('./routes/agent-routes');
+const { agentAdminRoutes } = require('./routes/agent-admin-routes');
+const { packageOfferRoutes } = require('./routes/package-offer-routes');
 const express = require('express');
 const helmet = require('helmet');
 const { ZodError } = require('zod');
@@ -9,7 +12,7 @@ const { legacyRoutes } = require('./routes/legacy-routes');
 const { devicePlaylistsRoutes } = require('./routes/device-playlists-routes');
 const { providerActivityRoutes } = require('./routes/provider-activity-routes');
 
-function createApp(pool, key, paypal = null, verifyPlay = null) {
+function createApp(pool, key, paypal = null, verifyPlay = null, invitationMailer = null) {
   if (!/^[0-9a-f]{64}$/i.test(key ?? '')) throw new Error('JWT_SECRET must contain 64 hex characters');
   const app = express();
   app.disable('x-powered-by');
@@ -33,7 +36,10 @@ function createApp(pool, key, paypal = null, verifyPlay = null) {
     }
     next();
   });
+  app.use(agentRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
+  app.use(agentAdminRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
   app.use(adminRoutes(pool, Buffer.from(key, 'hex'), paypal));
+  app.use(packageOfferRoutes(pool, Buffer.from(key, 'hex')));
   app.use(dashboardRoutes(pool, Buffer.from(key, 'hex')));
   app.use(entitlementRoutes(pool, verifyPlay));
   app.use(devicePlaylistsRoutes(pool, Buffer.from(key, 'hex')));

@@ -5,6 +5,7 @@ const model = require('../models/payment-model');
 const coupons = require('../models/coupon-model');
 const credits = require('../models/credit-model');
 const { units, decimal } = require('./credit-service');
+const packages = require('./package-offer-service');
 
 function verifyCapture(order, remote, merchantId) {
   const purchase = remote.purchase_units?.length === 1 && remote.purchase_units[0];
@@ -21,27 +22,44 @@ function verifyCapture(order, remote, merchantId) {
   return capture.id;
 }
 
-async function createPayment(pool, paypal, resellerId, purpose, input) {
-  if (!paypal) throw new HttpError(503, 'PayPal is not configured');
-  const pack = purpose === 'package' ? await coupons.loadPackage(pool, input.package_id) : null;
-  if (purpose === 'package' && !pack) throw new HttpError(404, 'Package not found');
-  const price = pack ? pack.package_amount : input.amount;
+function validateOrderPrice(price, terms) {
   if (!/^\d{1,5}(\.\d{1,5})?$/.test(String(price)) ||
       units(price) % 1000n !== 0n || Number(price) <= 0 ||
-      (pack && (Number(price) >= 1000 || pack.count_devices < 1 || pack.count_devices > 1000 ||
-        pack.periods < 1 || pack.periods > 120))) {
+      (terms && Number(price) >= 1000)) {
     throw new HttpError(400, 'Invalid checkout amount or package');
   }
-  // The legacy routes charge in EUR. Package prices are read from MySQL.
-  const order = {
-    id: randomUUID(), resellerId, purpose, packageId: pack?.id ?? null,
-    duration: pack?.periods ?? null, couponCount: pack?.count_devices ?? null,
-    amount: Number(price).toFixed(2), currency: 'EUR',
-  };
-  await model.createIntent(pool, order);
+}
+
+async function createPayment(pool, paypal, resellerId, purpose, input) {
+  if (!paypal) throw new HttpError(503, 'PayPal is not configured');
+  let order;
+  if (purpose === 'package') {
+    order = await transaction(pool, async db => {
+      await credits.lockBalance(db, resellerId, { requireAccess: true });
+      const terms = await packages.quote(db, input.package_id, resellerId, { lock: true, offerId: input.offer_id, expectedTerms: input.expected_terms });
+      validateOrderPrice(terms.amount, terms);
+      const id = randomUUID();
+      const purchaseId = await packages.reservePurchase(db, resellerId, terms, 'paypal', id);
+      const intent = {
+        id, resellerId, purpose, packageId: terms.package_id,
+        duration: terms.periods, couponCount: terms.count_devices,
+        amount: Number(terms.amount).toFixed(2), currency: 'EUR', purchaseId,
+      };
+      await model.createIntent(db, intent);
+      return intent;
+    });
+  } else {
+    validateOrderPrice(input.amount);
+    order = { id: randomUUID(), resellerId, purpose, packageId: null,
+      duration: null, couponCount: null, amount: Number(input.amount).toFixed(2), currency: 'EUR' };
+    await model.createIntent(pool, order);
+  }
+  // Commit the reservation BEFORE contacting PayPal. Pending orders count toward
+  // offer limits, including ambiguous network failures. Never release them by a
+  // timer: an order may already have been approved or captured remotely.
   const remote = await paypal.create(order);
   await model.attachOrder(pool, order.id, remote.id);
-  return { redirectUrl: remote.redirectUrl };
+  return { redirectUrl: remote.redirectUrl, purchase_id: order.purchaseId ?? null };
 }
 
 async function confirmPayment(pool, paypal, purpose, token) {
@@ -76,7 +94,8 @@ async function confirmPayment(pool, paypal, purpose, token) {
       await credits.lockBalance(db, current.reseller_id);
       await model.recordPackage(db, current, captureId);
       const codes = Array.from({ length: current.coupon_count }, () => randomBytes(12).toString('hex').toUpperCase());
-      await coupons.createCoupons(db, current.reseller_id, current.duration, codes);
+      await coupons.createCoupons(db, current.reseller_id, current.duration, codes, current.purchase_id);
+      if (current.purchase_id) await packages.fulfillPurchase(db, current.purchase_id);
     }
     await model.markFulfilled(db, current.id, captureId);
   });

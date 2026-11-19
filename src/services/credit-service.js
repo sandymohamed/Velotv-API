@@ -3,6 +3,7 @@ const { transaction } = require('../config/database');
 const { HttpError } = require('../utils/errors');
 const credits = require('../models/credit-model');
 const coupons = require('../models/coupon-model');
+const packages = require('./package-offer-service');
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function units(value) {
@@ -56,26 +57,23 @@ function manualTopUp(pool, actorId, data) {
   });
 }
 
-function buyCoupons(pool, resellerId, packageId, reference) {
+function buyCoupons(pool, resellerId, packageId, reference, offerId = null, expectedTerms = null) {
   return runCreditOperation(pool, {
     resellerId, actorId: resellerId, kind: 'coupon_purchase', reference,
     operation: ['coupon_purchase', resellerId, reference],
-    fingerprint: [resellerId, packageId],
+    fingerprint: expectedTerms ? [resellerId, packageId, offerId, expectedTerms] : offerId == null ? [resellerId, packageId] : [resellerId, packageId, offerId],
   }, async (db, balance) => {
-    const pack = await coupons.loadPackage(db, packageId);
-    if (!pack) throw new HttpError(404, 'Package not found');
-    const price = units(pack.package_amount);
+    const terms = await packages.quote(db, packageId, resellerId, { lock: true, offerId, expectedTerms });
+    const price = units(terms.amount);
     const previous = units(balance.amount);
-    if (price <= 0n || !Number.isInteger(pack.count_devices) || pack.count_devices < 1 ||
-        pack.count_devices > 1000 || !Number.isInteger(pack.periods) || pack.periods < 1 || pack.periods > 120) {
-      throw new HttpError(409, 'Invalid package configuration');
-    }
     if (previous < price) throw new HttpError(400, 'Check if the available balance is sufficient for the transaction');
     const updated = decimal(previous - price);
-    const codes = Array.from({ length: pack.count_devices }, () => randomBytes(12).toString('hex').toUpperCase());
-    await coupons.createCoupons(db, resellerId, pack.periods, codes);
+    const codes = Array.from({ length: terms.count_devices }, () => randomBytes(12).toString('hex').toUpperCase());
+    const purchaseId = await packages.reservePurchase(db, resellerId, terms, 'wallet', reference);
+    await coupons.createCoupons(db, resellerId, terms.periods, codes, purchaseId);
+    await packages.fulfillPurchase(db, purchaseId);
     await credits.saveBalance(db, resellerId, balance, decimal(previous), updated, `Buy ${codes.length} Coupons | Ref ${reference}`);
-    return { error: false, message: 'success', balance: updated };
+    return { error: false, message: 'success', balance: updated, purchase_id: purchaseId, purchase: terms };
   });
 }
 

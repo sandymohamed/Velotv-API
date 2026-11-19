@@ -1,3 +1,4 @@
+const { catalog } = require('../services/package-offer-service');
 const { Router } = require('express');
 const { z } = require('zod');
 const { authenticate } = require('../middleware/auth');
@@ -41,9 +42,7 @@ function dashboardRoutes(pool, key) {
   const reseller = authenticate(pool, key, ['reseller']);
   router.get('/reseller/dashboard/catalog', reseller, async (_req, res) => {
     const [[packages], [types]] = await Promise.all([
-      pool.execute(`SELECT id, package_name, package_amount, periods, count_devices
-        FROM packages_reseller WHERE package_amount > 0 AND periods BETWEEN 1 AND 120
-        AND count_devices BETWEEN 1 AND 1000 ORDER BY package_amount, id`),
+      catalog(pool, _req.user.id).then(packages => [packages]),
       pool.execute('SELECT id, name FROM type_devices WHERE status = 1 ORDER BY id'),
     ]);
     res.json({ packages, types });
