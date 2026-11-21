@@ -17,25 +17,47 @@ function createApp(pool, key, paypal = null, verifyPlay = null, invitationMailer
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
+
   app.use(express.json({ limit: '32kb' }));
-  app.use(express.urlencoded({ extended: false, limit: '32kb' }));
-  app.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+
+  app.use(express.urlencoded({
+    extended: false,
+    limit: '32kb'
+  }));
+
+  app.use((_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
+
   app.get('/health', async (_req, res) => {
     await pool.execute('SELECT 1');
     res.json({ status: 'ok' });
   });
-  const dashboardOrigins = new Set((process.env.DASHBOARD_ORIGINS ?? '')
-    .split(',').map(value => value.trim()).filter(Boolean));
+
+  const dashboardOrigins = new Set(
+    (process.env.DASHBOARD_ORIGINS ?? '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
+  const allowAnyOrigin = dashboardOrigins.has('*');
+
   app.use((req, res, next) => {
+    const origin = req.get('Origin');
     res.vary('Origin');
-    if (dashboardOrigins.has(req.get('Origin'))) {
-      res.set('Access-Control-Allow-Origin', req.get('Origin'));
+
+    if (origin && (allowAnyOrigin || dashboardOrigins.has(origin))) {
+      res.set('Access-Control-Allow-Origin', allowAnyOrigin ? '*' : origin);
       res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key');
+
       if (req.method === 'OPTIONS') return res.sendStatus(204);
     }
+
     next();
   });
+
   app.use(agentRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
   app.use(agentAdminRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
   app.use(adminRoutes(pool, Buffer.from(key, 'hex'), paypal));
@@ -56,6 +78,8 @@ function createApp(pool, key, paypal = null, verifyPlay = null, invitationMailer
     console.error('Request failed:', error.code || error.name);
     return res.status(500).json({ error: true, message: 'Internal error' });
   });
+
   return app;
 }
+
 module.exports = { createApp };
