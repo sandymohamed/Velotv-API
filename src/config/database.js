@@ -10,15 +10,21 @@ async function connectDatabase(env = process.env) {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   const sslDisabled = env.DB_SSL === 'disable';
   if (sslDisabled && (!local || env.NODE_ENV === 'production')) throw new Error('Plaintext MySQL is local development only');
+  const caPem = env.DB_CA_PEM?.replace(/\\n/g, '\n').trim();
+
   const options = {
     host: url.hostname.replace(/^\[|\]$/g, ''),
     user: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
     port: Number(url.port || 3306), multipleStatements: false, timezone: 'Z',
     charset: 'utf8mb4', connectTimeout: 8000,
-    ssl: sslDisabled ? undefined : {
-      rejectUnauthorized: true, verifyIdentity: true, minVersion: 'TLSv1.2',
-      ...(env.DB_CA_FILE && { ca: readFileSync(env.DB_CA_FILE, 'utf8') }),
-    },
+    ssl: sslDisabled
+      ? undefined
+      : {
+        rejectUnauthorized: true,
+        verifyIdentity: true,
+        minVersion: 'TLSv1.2',
+        ...(caPem ? { ca: caPem } : {}),
+      },
   };
   if (env.DB_AUTO_CREATE === 'true') {
     const conn = await mysql.createConnection(options);
