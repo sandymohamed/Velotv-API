@@ -1,15 +1,15 @@
 const { activeReseller } = require('../services/reseller-access');
 const accounts = {
   agent: {
-    login: 'SELECT id,username,email,phone,password,status FROM velotv_agents WHERE (email=? OR username=?) LIMIT 2',
+    login: 'SELECT id,username,email,phone,password,status,must_change_password FROM velotv_agents WHERE (email=? OR username=?) LIMIT 2',
     status: 'SELECT id FROM velotv_agents WHERE id=? AND status=1',
   },
   admin: {
-    login: 'SELECT id, name, email, password, status FROM admins WHERE email = ? LIMIT 2',
+    login: 'SELECT id, name, email, password, status, must_change_password FROM admins WHERE email = ? LIMIT 2',
     status: 'SELECT id FROM admins WHERE id = ? AND status = 1',
   },
   reseller: {
-    login: 'SELECT id, username, email, phone, password, status FROM resellers WHERE (email = ? OR username = ?) LIMIT 2',
+    login: 'SELECT id, username, email, phone, password, status, must_change_password FROM resellers WHERE (email = ? OR username = ?) LIMIT 2',
     status: 'SELECT id FROM resellers WHERE id = ? AND status = 1',
   },
 };

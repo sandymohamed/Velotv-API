@@ -11,6 +11,7 @@ const { dashboardRoutes } = require('./routes/dashboard-routes');
 const { legacyRoutes } = require('./routes/legacy-routes');
 const { devicePlaylistsRoutes } = require('./routes/device-playlists-routes');
 const { providerActivityRoutes } = require('./routes/provider-activity-routes');
+const { passwordRoutes } = require('./routes/password-routes');
 
 function createApp(pool, key, paypal = null, verifyPlay = null, invitationMailer = null) {
   if (!/^[0-9a-f]{64}$/i.test(key ?? '')) throw new Error('JWT_SECRET must contain 64 hex characters');
@@ -60,6 +61,7 @@ function createApp(pool, key, paypal = null, verifyPlay = null, invitationMailer
 
   app.use(agentRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
   app.use(agentAdminRoutes(pool, Buffer.from(key, 'hex'), invitationMailer));
+  app.use(passwordRoutes(pool, Buffer.from(key, 'hex')));
   app.use(adminRoutes(pool, Buffer.from(key, 'hex'), paypal));
   app.use(packageOfferRoutes(pool, Buffer.from(key, 'hex')));
   app.use(dashboardRoutes(pool, Buffer.from(key, 'hex')));

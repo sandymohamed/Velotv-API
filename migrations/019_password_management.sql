@@ -1,0 +1,8 @@
+ALTER TABLE admins
+  ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE velotv_agents
+  ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE resellers
+  ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
