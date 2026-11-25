@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { rateLimit } = require('express-rate-limit');
+const { createRateLimit: rateLimit } = require('../middleware/rate-limit');
 const { authenticate } = require('../middleware/auth');
 const { login } = require('../controllers/auth-controller');
 const { creditController } = require('../controllers/credit-controller');

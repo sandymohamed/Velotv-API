@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const { z } = require('zod');
-const { rateLimit } = require('express-rate-limit');
+const { createRateLimit: rateLimit } = require('../middleware/rate-limit');
 const { authenticate } = require('../middleware/auth');
 const { activeReseller } = require('../services/reseller-access');
 const { transaction } = require('../config/database');

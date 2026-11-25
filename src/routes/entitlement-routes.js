@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { rateLimit } = require('express-rate-limit');
+const { createRateLimit: rateLimit } = require('../middleware/rate-limit');
 const { createHash } = require('node:crypto');
 const { z } = require('zod');
 const { androidId } = require('../utils/validation');

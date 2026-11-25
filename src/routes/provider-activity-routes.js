@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { rateLimit } = require('express-rate-limit');
+const { createRateLimit: rateLimit } = require('../middleware/rate-limit');
 const { z } = require('zod');
 const { transaction } = require('../config/database');
 const { findAndroidDevice, isActiveDevice } = require('../models/device-model');
